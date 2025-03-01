@@ -1,0 +1,231 @@
+#include "stats_api.h"
+#include "stats_manager.h"
+#include <spdlog/spdlog.h>
+#include <nlohmann/json.hpp>
+#include <httplib.h>
+#include <thread>
+#include <chrono>
+
+namespace scheduler
+{
+
+  // StatsApiHandler 实现
+  std::string StatsApiHandler::handleRequest(const std::string &path,
+                                             const std::string &method,
+                                             const std::map<std::string, std::string> &query_params)
+  {
+    // 只支持GET方法
+    if (method != "GET")
+    {
+      nlohmann::json error;
+      error["error"] = "Method not allowed";
+      return error.dump();
+    }
+
+    // 路由请求
+    if (path == "/api/stats" || path == "/api/stats/")
+    {
+      return getAllStats();
+    }
+    else if (path == "/api/stats/jobs")
+    {
+      return getJobStats();
+    }
+    else if (path == "/api/stats/executors")
+    {
+      return getExecutorStats();
+    }
+    else if (path == "/api/stats/system")
+    {
+      return getSystemStats();
+    }
+    else if (path == "/api/stats/reset")
+    {
+      return resetStats();
+    }
+    else
+    {
+      nlohmann::json error;
+      error["error"] = "Not found";
+      return error.dump();
+    }
+  }
+
+  std::string StatsApiHandler::getAllStats()
+  {
+    return StatsManager::getInstance().exportStatsAsJson();
+  }
+
+  std::string StatsApiHandler::getJobStats()
+  {
+    nlohmann::json j;
+    auto stats = StatsManager::getInstance().getJobStats();
+
+    j["total"] = stats.total_jobs.load();
+    j["pending"] = stats.pending_jobs.load();
+    j["running"] = stats.running_jobs.load();
+    j["completed"] = stats.completed_jobs.load();
+    j["failed"] = stats.failed_jobs.load();
+    j["timeout"] = stats.timeout_jobs.load();
+    j["cancelled"] = stats.cancelled_jobs.load();
+    j["once"] = stats.once_jobs.load();
+    j["periodic"] = stats.periodic_jobs.load();
+    j["avg_execution_time"] = stats.getAvgExecutionTime();
+    j["min_execution_time"] = stats.min_execution_time.load();
+    j["max_execution_time"] = stats.max_execution_time.load();
+    j["retry_count"] = stats.retry_count.load();
+
+    return j.dump(2);
+  }
+
+  std::string StatsApiHandler::getExecutorStats()
+  {
+    nlohmann::json j = nlohmann::json::array();
+    auto stats = StatsManager::getInstance().getExecutorStats();
+
+    for (const auto &executor : stats)
+    {
+      nlohmann::json exec;
+      exec["id"] = executor.executor_id;
+      exec["address"] = executor.address;
+      exec["current_load"] = executor.current_load;
+      exec["max_load"] = executor.max_load;
+      exec["load_ratio"] = executor.getLoadRatio();
+      exec["tasks_executed"] = executor.total_tasks_executed;
+      exec["last_heartbeat"] = std::chrono::duration_cast<std::chrono::seconds>(
+                                   executor.last_heartbeat.time_since_epoch())
+                                   .count();
+      exec["online"] = executor.is_online;
+      j.push_back(exec);
+    }
+
+    return j.dump(2);
+  }
+
+  std::string StatsApiHandler::getSystemStats()
+  {
+    nlohmann::json j;
+    auto stats = StatsManager::getInstance().getSystemStats();
+
+    j["uptime"] = stats.scheduler_uptime.load();
+    j["db_query_count"] = stats.db_query_count.load();
+    j["db_query_avg_time"] = stats.getAvgDbQueryTime();
+    j["kafka_msg_sent"] = stats.kafka_msg_sent.load();
+    j["kafka_msg_received"] = stats.kafka_msg_received.load();
+    j["scheduler_cycles"] = stats.scheduler_cycles.load();
+
+    return j.dump(2);
+  }
+
+  std::string StatsApiHandler::resetStats()
+  {
+    StatsManager::getInstance().resetAllStats();
+
+    nlohmann::json j;
+    j["status"] = "success";
+    j["message"] = "Statistics reset successfully";
+
+    return j.dump(2);
+  }
+
+  // StatsApiServer 实现
+  class StatsApiServer::Impl
+  {
+  public:
+    Impl(int port) : port_(port), running_(false) {}
+
+    void start()
+    {
+      if (running_)
+      {
+        return;
+      }
+
+      running_ = true;
+      server_thread_ = std::thread([this]()
+                                   {
+        httplib::Server svr;
+        
+        // 设置API路由
+        svr.Get("/api/stats", [](const httplib::Request& req, httplib::Response& res) {
+          res.set_content(StatsApiHandler::handleRequest("/api/stats", "GET", req.params), "application/json");
+        });
+        
+        svr.Get("/api/stats/jobs", [](const httplib::Request& req, httplib::Response& res) {
+          res.set_content(StatsApiHandler::handleRequest("/api/stats/jobs", "GET", req.params), "application/json");
+        });
+        
+        svr.Get("/api/stats/executors", [](const httplib::Request& req, httplib::Response& res) {
+          res.set_content(StatsApiHandler::handleRequest("/api/stats/executors", "GET", req.params), "application/json");
+        });
+        
+        svr.Get("/api/stats/system", [](const httplib::Request& req, httplib::Response& res) {
+          res.set_content(StatsApiHandler::handleRequest("/api/stats/system", "GET", req.params), "application/json");
+        });
+        
+        svr.Get("/api/stats/reset", [](const httplib::Request& req, httplib::Response& res) {
+          res.set_content(StatsApiHandler::handleRequest("/api/stats/reset", "GET", req.params), "application/json");
+        });
+        
+        // 设置静态文件服务
+        svr.set_mount_point("/", "./web");
+        
+        // 启动服务器
+        spdlog::info("统计信息API服务器启动，监听端口: {}", port_);
+        svr.listen("0.0.0.0", port_);
+        
+        spdlog::info("统计信息API服务器已停止"); });
+    }
+
+    void stop()
+    {
+      if (!running_)
+      {
+        return;
+      }
+
+      running_ = false;
+
+      if (server_thread_.joinable())
+      {
+        server_thread_.join();
+      }
+    }
+
+    bool isRunning() const
+    {
+      return running_;
+    }
+
+  private:
+    int port_;
+    bool running_;
+    std::thread server_thread_;
+  };
+
+  StatsApiServer::StatsApiServer(int port)
+      : impl_(std::make_unique<Impl>(port))
+  {
+  }
+
+  StatsApiServer::~StatsApiServer()
+  {
+    stop();
+  }
+
+  void StatsApiServer::start()
+  {
+    impl_->start();
+  }
+
+  void StatsApiServer::stop()
+  {
+    impl_->stop();
+  }
+
+  bool StatsApiServer::isRunning() const
+  {
+    return impl_->isRunning();
+  }
+
+} // namespace scheduler
