@@ -8,13 +8,14 @@
 #include <chrono>
 #include <memory>
 #include "job.h"
+#include "job_dao.h"
 
 namespace scheduler
 {
   /**
-   * @brief 任务统计信息结构体
+   * @brief 任务统计信息结构体（内部使用，包含原子类型）
    */
-  struct JobStats
+  struct JobStatsAtomic
   {
     // 任务计数
     std::atomic<uint64_t> total_jobs{0};     // 总任务数
@@ -63,29 +64,42 @@ namespace scheduler
   };
 
   /**
-   * @brief 执行器统计信息结构体
+   * @brief 任务统计信息结构体（外部使用，不包含原子类型）
    */
-  struct ExecutorStats
+  struct JobStats
   {
-    std::string executor_id;                              // 执行器ID
-    std::string address;                                  // 执行器地址
-    uint64_t current_load{0};                             // 当前负载
-    uint64_t max_load{0};                                 // 最大负载
-    uint64_t total_tasks_executed{0};                     // 已执行任务总数
-    std::chrono::system_clock::time_point last_heartbeat; // 最后心跳时间
-    bool is_online{false};                                // 是否在线
+    // 任务计数
+    uint64_t total_jobs{0};     // 总任务数
+    uint64_t pending_jobs{0};   // 等待中的任务数
+    uint64_t running_jobs{0};   // 运行中的任务数
+    uint64_t completed_jobs{0}; // 已完成的任务数
+    uint64_t failed_jobs{0};    // 失败的任务数
+    uint64_t timeout_jobs{0};   // 超时的任务数
+    uint64_t cancelled_jobs{0}; // 取消的任务数
 
-    // 计算负载比例
-    float getLoadRatio() const
+    // 任务类型统计
+    uint64_t once_jobs{0};     // 一次性任务数
+    uint64_t periodic_jobs{0}; // 周期性任务数
+
+    // 执行时间统计
+    uint64_t total_execution_time{0};        // 总执行时间(毫秒)
+    uint64_t min_execution_time{UINT64_MAX}; // 最小执行时间(毫秒)
+    uint64_t max_execution_time{0};          // 最大执行时间(毫秒)
+
+    // 重试统计
+    uint64_t retry_count{0}; // 重试次数
+
+    // 计算平均执行时间
+    uint64_t getAvgExecutionTime() const
     {
-      return max_load > 0 ? static_cast<float>(current_load) / max_load : 0.0f;
+      return completed_jobs > 0 ? total_execution_time / completed_jobs : 0;
     }
   };
 
   /**
-   * @brief 系统性能统计信息结构体
+   * @brief 系统性能统计信息结构体（内部使用，包含原子类型）
    */
-  struct SystemStats
+  struct SystemStatsAtomic
   {
     std::atomic<uint64_t> scheduler_uptime{0};   // 调度器运行时间(秒)
     std::atomic<uint64_t> db_query_count{0};     // 数据库查询次数
@@ -109,6 +123,45 @@ namespace scheduler
       kafka_msg_sent = 0;
       kafka_msg_received = 0;
       scheduler_cycles = 0;
+    }
+  };
+
+  /**
+   * @brief 系统性能统计信息结构体（外部使用，不包含原子类型）
+   */
+  struct SystemStats
+  {
+    uint64_t scheduler_uptime{0};   // 调度器运行时间(秒)
+    uint64_t db_query_count{0};     // 数据库查询次数
+    uint64_t db_query_time{0};      // 数据库查询总时间(毫秒)
+    uint64_t kafka_msg_sent{0};     // Kafka消息发送数
+    uint64_t kafka_msg_received{0}; // Kafka消息接收数
+    uint64_t scheduler_cycles{0};   // 调度周期数
+
+    // 计算平均数据库查询时间
+    uint64_t getAvgDbQueryTime() const
+    {
+      return db_query_count > 0 ? db_query_time / db_query_count : 0;
+    }
+  };
+
+  /**
+   * @brief 执行器统计信息结构体
+   */
+  struct ExecutorStats
+  {
+    std::string executor_id;                              // 执行器ID
+    std::string address;                                  // 执行器地址
+    uint64_t current_load{0};                             // 当前负载
+    uint64_t max_load{0};                                 // 最大负载
+    uint64_t total_tasks_executed{0};                     // 已执行任务总数
+    std::chrono::system_clock::time_point last_heartbeat; // 最后心跳时间
+    bool is_online{false};                                // 是否在线
+
+    // 计算负载比例
+    float getLoadRatio() const
+    {
+      return max_load > 0 ? static_cast<float>(current_load) / max_load : 0.0f;
     }
   };
 
@@ -202,6 +255,11 @@ namespace scheduler
      */
     std::string exportStatsAsJson() const;
 
+    /**
+     * @brief 增加取消的任务计数
+     */
+    void incrementCancelledJobs();
+
   private:
     StatsManager();
     ~StatsManager() = default;
@@ -211,14 +269,14 @@ namespace scheduler
     StatsManager &operator=(const StatsManager &) = delete;
 
     // 任务统计信息
-    JobStats jobStats_;
+    JobStatsAtomic jobStats_;
 
     // 执行器统计信息
     std::map<std::string, ExecutorStats> executorStats_;
     mutable std::mutex executorStatsMutex_;
 
     // 系统性能统计信息
-    SystemStats systemStats_;
+    SystemStatsAtomic systemStats_;
 
     // 启动时间
     std::chrono::system_clock::time_point startTime_;

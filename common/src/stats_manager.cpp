@@ -188,9 +188,28 @@ namespace scheduler
                                         .count();
   }
 
+  void StatsManager::incrementCancelledJobs()
+  {
+    jobStats_.cancelled_jobs++;
+  }
+
   JobStats StatsManager::getJobStats() const
   {
-    return jobStats_;
+    JobStats stats;
+    stats.total_jobs = jobStats_.total_jobs.load();
+    stats.pending_jobs = jobStats_.pending_jobs.load();
+    stats.running_jobs = jobStats_.running_jobs.load();
+    stats.completed_jobs = jobStats_.completed_jobs.load();
+    stats.failed_jobs = jobStats_.failed_jobs.load();
+    stats.timeout_jobs = jobStats_.timeout_jobs.load();
+    stats.cancelled_jobs = jobStats_.cancelled_jobs.load();
+    stats.once_jobs = jobStats_.once_jobs.load();
+    stats.periodic_jobs = jobStats_.periodic_jobs.load();
+    stats.total_execution_time = jobStats_.total_execution_time.load();
+    stats.min_execution_time = jobStats_.min_execution_time.load();
+    stats.max_execution_time = jobStats_.max_execution_time.load();
+    stats.retry_count = jobStats_.retry_count.load();
+    return stats;
   }
 
   std::vector<ExecutorStats> StatsManager::getExecutorStats() const
@@ -210,7 +229,14 @@ namespace scheduler
 
   SystemStats StatsManager::getSystemStats() const
   {
-    return systemStats_;
+    SystemStats stats;
+    stats.scheduler_uptime = systemStats_.scheduler_uptime.load();
+    stats.db_query_count = systemStats_.db_query_count.load();
+    stats.db_query_time = systemStats_.db_query_time.load();
+    stats.kafka_msg_sent = systemStats_.kafka_msg_sent.load();
+    stats.kafka_msg_received = systemStats_.kafka_msg_received.load();
+    stats.scheduler_cycles = systemStats_.scheduler_cycles.load();
+    return stats;
   }
 
   void StatsManager::resetAllStats()
@@ -250,24 +276,24 @@ namespace scheduler
 
     // 任务统计
     ss << "----- 任务统计 -----" << std::endl;
-    ss << "总任务数: " << jobStats_.total_jobs << std::endl;
-    ss << "等待中任务: " << jobStats_.pending_jobs << std::endl;
-    ss << "运行中任务: " << jobStats_.running_jobs << std::endl;
-    ss << "已完成任务: " << jobStats_.completed_jobs << std::endl;
-    ss << "失败任务: " << jobStats_.failed_jobs << std::endl;
-    ss << "超时任务: " << jobStats_.timeout_jobs << std::endl;
-    ss << "取消任务: " << jobStats_.cancelled_jobs << std::endl;
-    ss << "一次性任务: " << jobStats_.once_jobs << std::endl;
-    ss << "周期性任务: " << jobStats_.periodic_jobs << std::endl;
+    ss << "总任务数: " << jobStats_.total_jobs.load() << std::endl;
+    ss << "等待中任务: " << jobStats_.pending_jobs.load() << std::endl;
+    ss << "运行中任务: " << jobStats_.running_jobs.load() << std::endl;
+    ss << "已完成任务: " << jobStats_.completed_jobs.load() << std::endl;
+    ss << "失败任务: " << jobStats_.failed_jobs.load() << std::endl;
+    ss << "超时任务: " << jobStats_.timeout_jobs.load() << std::endl;
+    ss << "取消任务: " << jobStats_.cancelled_jobs.load() << std::endl;
+    ss << "一次性任务: " << jobStats_.once_jobs.load() << std::endl;
+    ss << "周期性任务: " << jobStats_.periodic_jobs.load() << std::endl;
 
     // 执行时间统计
-    if (jobStats_.completed_jobs > 0)
+    if (jobStats_.completed_jobs.load() > 0)
     {
       ss << "平均执行时间: " << jobStats_.getAvgExecutionTime() << " 毫秒" << std::endl;
-      ss << "最小执行时间: " << jobStats_.min_execution_time << " 毫秒" << std::endl;
-      ss << "最大执行时间: " << jobStats_.max_execution_time << " 毫秒" << std::endl;
+      ss << "最小执行时间: " << jobStats_.min_execution_time.load() << " 毫秒" << std::endl;
+      ss << "最大执行时间: " << jobStats_.max_execution_time.load() << " 毫秒" << std::endl;
     }
-    ss << "重试次数: " << jobStats_.retry_count << std::endl;
+    ss << "重试次数: " << jobStats_.retry_count.load() << std::endl;
     ss << std::endl;
 
     // 执行器统计
@@ -295,15 +321,15 @@ namespace scheduler
 
     // 系统性能统计
     ss << "----- 系统性能统计 -----" << std::endl;
-    ss << "调度器运行时间: " << systemStats_.scheduler_uptime << " 秒" << std::endl;
-    ss << "数据库查询次数: " << systemStats_.db_query_count << std::endl;
-    if (systemStats_.db_query_count > 0)
+    ss << "调度器运行时间: " << systemStats_.scheduler_uptime.load() << " 秒" << std::endl;
+    ss << "数据库查询次数: " << systemStats_.db_query_count.load() << std::endl;
+    if (systemStats_.db_query_count.load() > 0)
     {
       ss << "平均数据库查询时间: " << systemStats_.getAvgDbQueryTime() << " 毫秒" << std::endl;
     }
-    ss << "Kafka消息发送数: " << systemStats_.kafka_msg_sent << std::endl;
-    ss << "Kafka消息接收数: " << systemStats_.kafka_msg_received << std::endl;
-    ss << "调度周期数: " << systemStats_.scheduler_cycles << std::endl;
+    ss << "Kafka消息发送数: " << systemStats_.kafka_msg_sent.load() << std::endl;
+    ss << "Kafka消息接收数: " << systemStats_.kafka_msg_received.load() << std::endl;
+    ss << "调度周期数: " << systemStats_.scheduler_cycles.load() << std::endl;
 
     return ss.str();
   }
@@ -313,7 +339,7 @@ namespace scheduler
     nlohmann::json j;
 
     // 系统信息
-    j["system"]["uptime"] = systemStats_.scheduler_uptime;
+    j["system"]["uptime"] = systemStats_.scheduler_uptime.load();
     j["system"]["timestamp"] = std::chrono::duration_cast<std::chrono::seconds>(
                                    std::chrono::system_clock::now().time_since_epoch())
                                    .count();
