@@ -12,7 +12,7 @@ namespace scheduler
   // StatsApiHandler 实现
   std::string StatsApiHandler::handleRequest(const std::string &path,
                                              const std::string &method,
-                                             const std::map<std::string, std::string> &query_params)
+                                             const httplib::Params &query_params)
   {
     // 只支持GET方法
     if (method != "GET")
@@ -61,19 +61,19 @@ namespace scheduler
     nlohmann::json j;
     auto stats = StatsManager::getInstance().getJobStats();
 
-    j["total"] = stats.total_jobs.load();
-    j["pending"] = stats.pending_jobs.load();
-    j["running"] = stats.running_jobs.load();
-    j["completed"] = stats.completed_jobs.load();
-    j["failed"] = stats.failed_jobs.load();
-    j["timeout"] = stats.timeout_jobs.load();
-    j["cancelled"] = stats.cancelled_jobs.load();
-    j["once"] = stats.once_jobs.load();
-    j["periodic"] = stats.periodic_jobs.load();
+    j["total"] = stats.total_jobs;
+    j["pending"] = stats.pending_jobs;
+    j["running"] = stats.running_jobs;
+    j["completed"] = stats.completed_jobs;
+    j["failed"] = stats.failed_jobs;
+    j["timeout"] = stats.timeout_jobs;
+    j["cancelled"] = stats.cancelled_jobs;
+    j["once"] = stats.once_jobs;
+    j["periodic"] = stats.periodic_jobs;
     j["avg_execution_time"] = stats.getAvgExecutionTime();
-    j["min_execution_time"] = stats.min_execution_time.load();
-    j["max_execution_time"] = stats.max_execution_time.load();
-    j["retry_count"] = stats.retry_count.load();
+    j["min_execution_time"] = stats.min_execution_time;
+    j["max_execution_time"] = stats.max_execution_time;
+    j["retry_count"] = stats.retry_count;
 
     return j.dump(2);
   }
@@ -107,12 +107,12 @@ namespace scheduler
     nlohmann::json j;
     auto stats = StatsManager::getInstance().getSystemStats();
 
-    j["uptime"] = stats.scheduler_uptime.load();
-    j["db_query_count"] = stats.db_query_count.load();
+    j["uptime"] = stats.scheduler_uptime;
+    j["db_query_count"] = stats.db_query_count;
     j["db_query_avg_time"] = stats.getAvgDbQueryTime();
-    j["kafka_msg_sent"] = stats.kafka_msg_sent.load();
-    j["kafka_msg_received"] = stats.kafka_msg_received.load();
-    j["scheduler_cycles"] = stats.scheduler_cycles.load();
+    j["kafka_msg_sent"] = stats.kafka_msg_sent;
+    j["kafka_msg_received"] = stats.kafka_msg_received;
+    j["scheduler_cycles"] = stats.scheduler_cycles;
 
     return j.dump(2);
   }

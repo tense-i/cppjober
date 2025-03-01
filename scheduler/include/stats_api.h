@@ -6,6 +6,12 @@
 #include <map>
 #include "stats_manager.h"
 
+// 前向声明
+namespace httplib
+{
+  using Params = std::multimap<std::string, std::string>;
+}
+
 namespace scheduler
 {
   /**
@@ -23,7 +29,7 @@ namespace scheduler
      */
     static std::string handleRequest(const std::string &path,
                                      const std::string &method,
-                                     const std::map<std::string, std::string> &query_params);
+                                     const httplib::Params &query_params);
 
   private:
     // 获取所有统计信息
