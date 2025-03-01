@@ -14,6 +14,9 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 # 添加cmake模块路径
 set(CMAKE_MODULE_PATH ${CMAKE_MODULE_PATH} "${CMAKE_SOURCE_DIR}/cmake")
 
+# 添加第三方库路径
+include_directories(${CMAKE_SOURCE_DIR}/third_party/cpp-httplib)
+
 # 添加外部依赖
 # 使用系统安装的MySQL库
 find_package(PkgConfig REQUIRED)
