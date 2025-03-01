@@ -914,7 +914,7 @@ namespace scheduler
   // 执行器节点相关操作
 
   // 注册执行器节点
-  bool JobDAO::registerExecutor(const std::string &executorId, const std::string &host, int port)
+  bool JobDAO::registerExecutor(const std::string &executorId, const std::string &host, int port, int maxLoad)
   {
     auto conn = DBConnectionPool::getInstance().getConnection();
     if (!conn)
@@ -924,15 +924,17 @@ namespace scheduler
     }
 
     std::stringstream ss;
-    ss << "INSERT INTO executor_node (executor_id, host, port, status) VALUES ("
+    ss << "INSERT INTO executor_node (executor_id, host, port, status, max_load) VALUES ("
        << "'" << executorId << "', "
        << "'" << host << "', "
        << port << ", "
-       << "'ONLINE') "
+       << "'ONLINE', "
+       << maxLoad << ") "
        << "ON DUPLICATE KEY UPDATE "
        << "host = '" << host << "', "
        << "port = " << port << ", "
        << "status = 'ONLINE', "
+       << "max_load = " << maxLoad << ", "
        << "last_heartbeat = CURRENT_TIMESTAMP";
 
     bool result = conn->executeUpdate(ss.str());
@@ -1308,6 +1310,258 @@ namespace scheduler
 
     spdlog::info("Cleaned up {} expired executions", count);
     return count;
+  }
+
+  // 从结果集构建ExecutorInfo对象
+  ExecutorInfo JobDAO::buildExecutorInfoFromResult(MYSQL_RES *result)
+  {
+    ExecutorInfo info;
+
+    if (!result)
+    {
+      return info;
+    }
+
+    MYSQL_ROW row = mysql_fetch_row(result);
+    if (!row)
+    {
+      return info;
+    }
+
+    unsigned long *lengths = mysql_fetch_lengths(result);
+
+    // 获取字段值
+    if (row[0])
+      info.executor_id = std::string(row[0], lengths[0]);
+
+    // 构建地址
+    if (row[1] && row[2])
+    {
+      std::string host = std::string(row[1], lengths[1]);
+      int port = std::stoi(std::string(row[2], lengths[2]));
+      std::stringstream addrSs;
+      addrSs << host << ":" << port;
+      info.address = addrSs.str();
+    }
+
+    // 获取负载信息
+    if (row[3])
+      info.current_load = std::stoi(std::string(row[3], lengths[3]));
+    if (row[4])
+      info.max_load = std::stoi(std::string(row[4], lengths[4]));
+    if (row[5])
+      info.total_tasks_executed = std::stoull(std::string(row[5], lengths[5]));
+    if (row[6])
+      info.last_heartbeat = stringToTimePoint(std::string(row[6], lengths[6]));
+
+    return info;
+  }
+
+  // 获取详细的执行器信息列表
+  std::vector<ExecutorInfo> JobDAO::getOnlineExecutorsWithLoad()
+  {
+    std::vector<ExecutorInfo> executors;
+
+    auto conn = DBConnectionPool::getInstance().getConnection();
+    if (!conn)
+    {
+      spdlog::error("Failed to get database connection");
+      return executors;
+    }
+
+    // 获取最近5分钟有心跳的执行器
+    std::stringstream ss;
+    ss << "SELECT executor_id, host, port, current_load, max_load, total_tasks_executed, last_heartbeat "
+       << "FROM executor_node "
+       << "WHERE status = 'ONLINE' AND "
+       << "last_heartbeat > DATE_SUB(NOW(), INTERVAL 5 MINUTE)";
+
+    if (!conn->executeQuery(ss.str()))
+    {
+      DBConnectionPool::getInstance().releaseConnection(conn);
+      spdlog::error("Failed to query online executors with load");
+      return executors;
+    }
+
+    MYSQL_RES *result = conn->getResult();
+    if (!result)
+    {
+      DBConnectionPool::getInstance().releaseConnection(conn);
+      spdlog::error("Failed to get result set");
+      return executors;
+    }
+
+    MYSQL_ROW row;
+    while ((row = mysql_fetch_row(result)))
+    {
+      mysql_data_seek(result, executors.size());
+      ExecutorInfo info = buildExecutorInfoFromResult(result);
+      executors.push_back(info);
+    }
+
+    mysql_free_result(result);
+    DBConnectionPool::getInstance().releaseConnection(conn);
+
+    return executors;
+  }
+
+  // 获取单个执行器信息
+  std::optional<ExecutorInfo> JobDAO::getExecutorInfo(const std::string &executorId)
+  {
+    auto conn = DBConnectionPool::getInstance().getConnection();
+    if (!conn)
+    {
+      spdlog::error("Failed to get database connection");
+      return std::nullopt;
+    }
+
+    std::stringstream ss;
+    ss << "SELECT executor_id, host, port, current_load, max_load, total_tasks_executed, last_heartbeat "
+       << "FROM executor_node "
+       << "WHERE executor_id = '" << executorId << "'";
+
+    if (!conn->executeQuery(ss.str()))
+    {
+      DBConnectionPool::getInstance().releaseConnection(conn);
+      spdlog::error("Failed to query executor info: {}", executorId);
+      return std::nullopt;
+    }
+
+    MYSQL_RES *result = conn->getResult();
+    if (!result || mysql_num_rows(result) == 0)
+    {
+      if (result)
+        mysql_free_result(result);
+      DBConnectionPool::getInstance().releaseConnection(conn);
+      spdlog::warn("Executor not found: {}", executorId);
+      return std::nullopt;
+    }
+
+    ExecutorInfo info = buildExecutorInfoFromResult(result);
+    mysql_free_result(result);
+    DBConnectionPool::getInstance().releaseConnection(conn);
+
+    return info;
+  }
+
+  // 增加执行器负载
+  bool JobDAO::incrementExecutorLoad(const std::string &executorId)
+  {
+    auto conn = DBConnectionPool::getInstance().getConnection();
+    if (!conn)
+    {
+      spdlog::error("Failed to get database connection");
+      return false;
+    }
+
+    std::stringstream ss;
+    ss << "UPDATE executor_node SET "
+       << "current_load = current_load + 1 "
+       << "WHERE executor_id = '" << executorId << "'";
+
+    bool result = conn->executeUpdate(ss.str());
+    DBConnectionPool::getInstance().releaseConnection(conn);
+
+    if (!result)
+    {
+      spdlog::error("Failed to increment executor load: {}", executorId);
+    }
+    else
+    {
+      spdlog::debug("Executor load incremented: {}", executorId);
+    }
+
+    return result;
+  }
+
+  // 减少执行器负载
+  bool JobDAO::decrementExecutorLoad(const std::string &executorId)
+  {
+    auto conn = DBConnectionPool::getInstance().getConnection();
+    if (!conn)
+    {
+      spdlog::error("Failed to get database connection");
+      return false;
+    }
+
+    std::stringstream ss;
+    ss << "UPDATE executor_node SET "
+       << "current_load = GREATEST(0, current_load - 1) "
+       << "WHERE executor_id = '" << executorId << "'";
+
+    bool result = conn->executeUpdate(ss.str());
+    DBConnectionPool::getInstance().releaseConnection(conn);
+
+    if (!result)
+    {
+      spdlog::error("Failed to decrement executor load: {}", executorId);
+    }
+    else
+    {
+      spdlog::debug("Executor load decremented: {}", executorId);
+    }
+
+    return result;
+  }
+
+  // 更新执行器最大负载
+  bool JobDAO::updateExecutorMaxLoad(const std::string &executorId, int maxLoad)
+  {
+    auto conn = DBConnectionPool::getInstance().getConnection();
+    if (!conn)
+    {
+      spdlog::error("Failed to get database connection");
+      return false;
+    }
+
+    std::stringstream ss;
+    ss << "UPDATE executor_node SET "
+       << "max_load = " << maxLoad << " "
+       << "WHERE executor_id = '" << executorId << "'";
+
+    bool result = conn->executeUpdate(ss.str());
+    DBConnectionPool::getInstance().releaseConnection(conn);
+
+    if (!result)
+    {
+      spdlog::error("Failed to update executor max load: {}", executorId);
+    }
+    else
+    {
+      spdlog::info("Executor max load updated: {}, max_load: {}", executorId, maxLoad);
+    }
+
+    return result;
+  }
+
+  // 增加执行器已执行任务数
+  bool JobDAO::incrementExecutorTaskCount(const std::string &executorId)
+  {
+    auto conn = DBConnectionPool::getInstance().getConnection();
+    if (!conn)
+    {
+      spdlog::error("Failed to get database connection");
+      return false;
+    }
+
+    std::stringstream ss;
+    ss << "UPDATE executor_node SET "
+       << "total_tasks_executed = total_tasks_executed + 1 "
+       << "WHERE executor_id = '" << executorId << "'";
+
+    bool result = conn->executeUpdate(ss.str());
+    DBConnectionPool::getInstance().releaseConnection(conn);
+
+    if (!result)
+    {
+      spdlog::error("Failed to increment executor task count: {}", executorId);
+    }
+    else
+    {
+      spdlog::debug("Executor task count incremented: {}", executorId);
+    }
+
+    return result;
   }
 
 } // namespace scheduler

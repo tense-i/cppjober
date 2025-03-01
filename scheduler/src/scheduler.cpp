@@ -94,10 +94,10 @@ namespace scheduler
   class ExecutorRegistry
   {
   public:
-    ExecutorRegistry(JobDAO &dao) : dao_(dao) {}
+    ExecutorRegistry(JobDAO &dao) : dao_(dao), current_index_(0) {}
 
-    // 获取可用执行器
-    std::optional<std::pair<std::string, std::string>> getAvailableExecutor()
+    // 获取可用执行器 - 随机策略
+    std::optional<std::pair<std::string, std::string>> getRandomExecutor()
     {
       auto executors = dao_.getOnlineExecutors();
       if (executors.empty())
@@ -114,13 +114,105 @@ namespace scheduler
       return executors[index];
     }
 
+    // 获取可用执行器 - 轮询策略
+    std::optional<std::pair<std::string, std::string>> getRoundRobinExecutor()
+    {
+      auto executors = dao_.getOnlineExecutors();
+      if (executors.empty())
+      {
+        return std::nullopt;
+      }
+
+      // 使用轮询策略选择执行器
+      std::lock_guard<std::mutex> lock(mutex_);
+      if (current_index_ >= executors.size())
+      {
+        current_index_ = 0;
+      }
+      auto result = executors[current_index_];
+      current_index_ = (current_index_ + 1) % executors.size();
+
+      return result;
+    }
+
+    // 获取可用执行器 - 最少负载策略
+    std::optional<std::pair<std::string, std::string>> getLeastLoadExecutor()
+    {
+      auto executors = dao_.getOnlineExecutorsWithLoad();
+      if (executors.empty())
+      {
+        return std::nullopt;
+      }
+
+      // 找到负载最小的执行器
+      auto min_load_executor = std::min_element(executors.begin(), executors.end(),
+                                                [](const ExecutorInfo &a, const ExecutorInfo &b)
+                                                {
+                                                  // 计算负载比例
+                                                  float load_ratio_a = a.max_load > 0 ? static_cast<float>(a.current_load) / a.max_load : 1.0f;
+                                                  float load_ratio_b = b.max_load > 0 ? static_cast<float>(b.current_load) / b.max_load : 1.0f;
+                                                  return load_ratio_a < load_ratio_b;
+                                                });
+
+      // 检查是否超过最大负载
+      if (min_load_executor->current_load >= min_load_executor->max_load)
+      {
+        spdlog::warn("All executors are at maximum load capacity");
+        return std::nullopt;
+      }
+
+      return std::make_pair(min_load_executor->executor_id, min_load_executor->address);
+    }
+
+    // 获取可用执行器 - 根据策略选择
+    std::optional<std::pair<std::string, std::string>> getAvailableExecutor(ExecutorSelectionStrategy strategy)
+    {
+      switch (strategy)
+      {
+      case ExecutorSelectionStrategy::ROUND_ROBIN:
+        return getRoundRobinExecutor();
+      case ExecutorSelectionStrategy::LEAST_LOAD:
+        return getLeastLoadExecutor();
+      case ExecutorSelectionStrategy::RANDOM:
+      default:
+        return getRandomExecutor();
+      }
+    }
+
+    // 兼容旧接口
+    std::optional<std::pair<std::string, std::string>> getAvailableExecutor()
+    {
+      return getRandomExecutor();
+    }
+
+    // 更新执行器负载
+    bool updateExecutorLoad(const std::string &executorId, bool increment)
+    {
+      if (increment)
+      {
+        return dao_.incrementExecutorLoad(executorId);
+      }
+      else
+      {
+        return dao_.decrementExecutorLoad(executorId);
+      }
+    }
+
+    // 增加执行器任务计数
+    bool incrementExecutorTaskCount(const std::string &executorId)
+    {
+      return dao_.incrementExecutorTaskCount(executorId);
+    }
+
   private:
     JobDAO &dao_;
+    size_t current_index_; // 用于轮询策略
+    std::mutex mutex_;     // 保护current_index_
   };
 
   // JobScheduler实现
   JobScheduler::JobScheduler()
-      : running_(false)
+      : running_(false), executor_selection_strategy_(ExecutorSelectionStrategy::RANDOM)
   {
     // 初始化数据库连接池
     auto &dbPool = DBConnectionPool::getInstance();
@@ -142,8 +234,7 @@ namespace scheduler
             {
               // 解析任务结果
               nlohmann::json j = nlohmann::json::parse(message.payload);
-              JobResult result;
-              result.from_json(j);
+              JobResult result = JobResult::from_json(j);
               
               // 处理任务结果
               handle_result(result);
@@ -200,6 +291,20 @@ namespace scheduler
     kafka_client_->stopConsume();
 
     spdlog::info("Job scheduler stopped");
+  }
+
+  void JobScheduler::set_executor_selection_strategy(ExecutorSelectionStrategy strategy)
+  {
+    std::lock_guard<std::mutex> lock(mutex_);
+    executor_selection_strategy_ = strategy;
+    spdlog::info("Executor selection strategy changed to: {}",
+                 static_cast<int>(strategy));
+  }
+
+  ExecutorSelectionStrategy JobScheduler::get_executor_selection_strategy() const
+  {
+    std::lock_guard<std::mutex> lock(mutex_);
+    return executor_selection_strategy_;
   }
 
   std::string JobScheduler::submit_job(const JobInfo &job)
@@ -390,7 +495,7 @@ namespace scheduler
     }
 
     // 检查是否有可用执行器
-    auto executor_opt = executor_registry_->getAvailableExecutor();
+    auto executor_opt = executor_registry_->getAvailableExecutor(executor_selection_strategy_);
     if (!executor_opt)
     {
       spdlog::warn("No available executor for job: {}", job.job_id);
@@ -403,7 +508,7 @@ namespace scheduler
   void JobScheduler::dispatch_job(const JobInfo &job)
   {
     // 获取可用执行器
-    auto executor_opt = executor_registry_->getAvailableExecutor();
+    auto executor_opt = executor_registry_->getAvailableExecutor(executor_selection_strategy_);
     if (!executor_opt)
     {
       spdlog::error("No available executor for job: {}", job.job_id);
@@ -412,6 +517,9 @@ namespace scheduler
 
     // 记录执行信息
     job_storage_->saveExecution(job.job_id, executor_opt->first);
+
+    // 更新执行器负载
+    executor_registry_->updateExecutorLoad(executor_opt->first, true);
 
     // 发送任务到执行器
     kafka_client_->sendJob("job-submit", job);
@@ -449,6 +557,26 @@ namespace scheduler
 
     JobInfo job = *job_opt;
     job_storage_->updateJob(job);
+
+    // 更新执行器负载和任务计数
+    auto executions_with_executor = job_storage_->getJobExecutions(result.job_id, 0, 1);
+    if (!executions_with_executor.empty())
+    {
+      // 获取执行器ID
+      auto execution_opt = job_storage_->getExecution(execution_id);
+      if (execution_opt)
+      {
+        // 从数据库中获取执行器ID
+        auto executor_info = job_storage_->getExecutorInfo(execution_opt->job_id);
+        if (executor_info)
+        {
+          // 减少执行器负载
+          executor_registry_->updateExecutorLoad(executor_info->executor_id, false);
+          // 增加执行器任务计数
+          executor_registry_->incrementExecutorTaskCount(executor_info->executor_id);
+        }
+      }
+    }
 
     spdlog::info("Job completed: {}, status: {}", result.job_id, static_cast<int>(result.status));
   }
