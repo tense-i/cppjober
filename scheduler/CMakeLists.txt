@@ -1,9 +1,11 @@
 set(SCHEDULER_SOURCES
     src/scheduler.cpp
+    src/stats_api.cpp
 )
 
 set(SCHEDULER_HEADERS
     include/scheduler.h
+    include/stats_api.h
 )
 
 add_library(scheduler STATIC ${SCHEDULER_SOURCES} ${SCHEDULER_HEADERS})

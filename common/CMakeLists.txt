@@ -5,6 +5,7 @@ set(COMMON_SOURCES
     src/kafka_message_queue.cpp
     src/cron_parser.cpp
     src/config_manager.cpp
+    src/stats_manager.cpp
 )
 
 set(COMMON_HEADERS
@@ -17,6 +18,7 @@ set(COMMON_HEADERS
     include/kafka_message_queue.h
     include/cron_parser.h
     include/config_manager.h
+    include/stats_manager.h
 )
 
 add_library(common STATIC ${COMMON_SOURCES} ${COMMON_HEADERS})
