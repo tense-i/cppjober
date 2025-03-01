@@ -18,22 +18,22 @@ namespace scheduler
   {
   public:
     JobExecutor(const std::string &executor_id);
-    ~JobExecutor();
+    virtual ~JobExecutor();
 
     // 启动执行器
     void start();
     // 停止执行器
     void stop();
 
-  private:
+  protected:
     // 执行线程函数
     void execute_loop();
     // 执行具体任务
     JobResult execute_job(const JobInfo &job);
     // 向调度中心注册
-    void register_executor();
+    virtual void register_executor();
     // 向调度中心注销
-    void unregister_executor();
+    virtual void unregister_executor();
     // 心跳检测
     void heartbeat_loop();
     // 取消任务
