@@ -5,6 +5,8 @@
 #include <functional>
 #include <map>
 #include "stats_manager.h"
+#include "job_api.h"
+#include "executor_api.h"
 
 // 前向声明
 namespace httplib
@@ -14,6 +16,9 @@ namespace httplib
 
 namespace scheduler
 {
+  // 前向声明
+  class JobScheduler;
+
   /**
    * @brief 统计信息API处理器
    */
@@ -49,21 +54,22 @@ namespace scheduler
   };
 
   /**
-   * @brief 简单的HTTP服务器，用于提供统计信息API
+   * @brief 简单的HTTP服务器，用于提供API
    */
-  class StatsApiServer
+  class ApiServer
   {
   public:
     /**
      * @brief 构造函数
      * @param port 监听端口
+     * @param scheduler 调度器实例的引用
      */
-    explicit StatsApiServer(int port);
+    ApiServer(int port, JobScheduler &scheduler);
 
     /**
      * @brief 析构函数
      */
-    ~StatsApiServer();
+    ~ApiServer();
 
     /**
      * @brief 启动服务器
@@ -86,5 +92,8 @@ namespace scheduler
     class Impl;
     std::unique_ptr<Impl> impl_;
   };
+
+  // 为了向后兼容，保留原来的StatsApiServer类名
+  using StatsApiServer = ApiServer;
 
 } // namespace scheduler

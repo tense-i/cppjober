@@ -10,16 +10,16 @@ using namespace scheduler;
 
 // 全局调度器实例
 std::unique_ptr<JobScheduler> g_scheduler;
-// 全局统计信息API服务器实例
-std::unique_ptr<StatsApiServer> g_stats_server;
+// 全局API服务器实例
+std::unique_ptr<ApiServer> g_api_server;
 
 // 信号处理函数
 void signalHandler(int signal)
 {
   spdlog::info("接收到信号: {}, 正在停止调度器...", signal);
-  if (g_stats_server)
+  if (g_api_server)
   {
-    g_stats_server->stop();
+    g_api_server->stop();
   }
   if (g_scheduler)
   {
@@ -88,11 +88,11 @@ int main(int argc, char *argv[])
     }
     spdlog::info("当前执行器选择策略: {}", strategyName);
 
-    // 创建并启动统计信息API服务器
-    int statsPort = ConfigManager::getInstance().getInt("stats.api.port", 8080);
-    g_stats_server = std::make_unique<StatsApiServer>(statsPort);
-    g_stats_server->start();
-    spdlog::info("统计信息API服务器已启动，访问 http://localhost:{}/api/stats 查看统计信息", statsPort);
+    // 创建并启动API服务器
+    int apiPort = ConfigManager::getInstance().getInt("stats.api.port", 8080);
+    g_api_server = std::make_unique<ApiServer>(apiPort, *g_scheduler);
+    g_api_server->start();
+    spdlog::info("API服务器已启动，访问 http://localhost:{}/api 查看API接口", apiPort);
 
     // 主线程等待
     spdlog::info("调度器已启动，按Ctrl+C停止");

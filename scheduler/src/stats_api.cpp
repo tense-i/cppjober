@@ -1,5 +1,8 @@
 #include "stats_api.h"
 #include "stats_manager.h"
+#include "job_api.h"
+#include "executor_api.h"
+#include "scheduler.h"
 #include <spdlog/spdlog.h>
 #include <nlohmann/json.hpp>
 #include <httplib.h>
@@ -128,11 +131,16 @@ namespace scheduler
     return j.dump(2);
   }
 
-  // StatsApiServer 实现
-  class StatsApiServer::Impl
+  // ApiServer 实现
+  class ApiServer::Impl
   {
   public:
-    Impl(int port) : port_(port), running_(false) {}
+    Impl(int port, JobScheduler &scheduler)
+        : port_(port), running_(false),
+          jobApiHandler_(scheduler),
+          executorApiHandler_()
+    {
+    }
 
     void start()
     {
@@ -146,7 +154,7 @@ namespace scheduler
                                    {
         httplib::Server svr;
         
-        // 设置API路由
+        // 设置统计信息API路由
         svr.Get("/api/stats", [](const httplib::Request& req, httplib::Response& res) {
           res.set_content(StatsApiHandler::handleRequest("/api/stats", "GET", req.params), "application/json");
         });
@@ -167,14 +175,85 @@ namespace scheduler
           res.set_content(StatsApiHandler::handleRequest("/api/stats/reset", "GET", req.params), "application/json");
         });
         
+        // 设置任务管理API路由
+        svr.Get("/api/jobs", [this](const httplib::Request& req, httplib::Response& res) {
+          res.set_content(jobApiHandler_.handleRequest("/api/jobs", "GET", req.params, ""), "application/json");
+        });
+        
+        svr.Post("/api/jobs", [this](const httplib::Request& req, httplib::Response& res) {
+          res.set_content(jobApiHandler_.handleRequest("/api/jobs", "POST", req.params, req.body), "application/json");
+        });
+        
+        svr.Get(R"(/api/jobs/([^/]+))", [this](const httplib::Request& req, httplib::Response& res) {
+          std::string path = "/api/jobs/" + req.matches[1];
+          res.set_content(jobApiHandler_.handleRequest(path, "GET", req.params, ""), "application/json");
+        });
+        
+        svr.Put(R"(/api/jobs/([^/]+))", [this](const httplib::Request& req, httplib::Response& res) {
+          std::string path = "/api/jobs/" + req.matches[1];
+          res.set_content(jobApiHandler_.handleRequest(path, "PUT", req.params, req.body), "application/json");
+        });
+        
+        svr.Delete(R"(/api/jobs/([^/]+))", [this](const httplib::Request& req, httplib::Response& res) {
+          std::string path = "/api/jobs/" + req.matches[1];
+          res.set_content(jobApiHandler_.handleRequest(path, "DELETE", req.params, ""), "application/json");
+        });
+        
+        svr.Post(R"(/api/jobs/([^/]+)/execute)", [this](const httplib::Request& req, httplib::Response& res) {
+          std::string path = "/api/jobs/" + req.matches[1] + "/execute";
+          res.set_content(jobApiHandler_.handleRequest(path, "POST", req.params, req.body), "application/json");
+        });
+        
+        svr.Get(R"(/api/jobs/([^/]+)/executions)", [this](const httplib::Request& req, httplib::Response& res) {
+          std::string path = "/api/jobs/" + req.matches[1] + "/executions";
+          res.set_content(jobApiHandler_.handleRequest(path, "GET", req.params, ""), "application/json");
+        });
+        
+        // 设置执行器管理API路由
+        svr.Get("/api/executors", [this](const httplib::Request& req, httplib::Response& res) {
+          res.set_content(executorApiHandler_.handleRequest("/api/executors", "GET", req.params, ""), "application/json");
+        });
+        
+        svr.Get(R"(/api/executors/([^/]+))", [this](const httplib::Request& req, httplib::Response& res) {
+          std::string path = "/api/executors/" + req.matches[1];
+          res.set_content(executorApiHandler_.handleRequest(path, "GET", req.params, ""), "application/json");
+        });
+        
+        svr.Put(R"(/api/executors/([^/]+)/load)", [this](const httplib::Request& req, httplib::Response& res) {
+          std::string path = "/api/executors/" + req.matches[1] + "/load";
+          res.set_content(executorApiHandler_.handleRequest(path, "PUT", req.params, req.body), "application/json");
+        });
+        
+        svr.Put(R"(/api/executors/([^/]+)/status)", [this](const httplib::Request& req, httplib::Response& res) {
+          std::string path = "/api/executors/" + req.matches[1] + "/status";
+          res.set_content(executorApiHandler_.handleRequest(path, "PUT", req.params, req.body), "application/json");
+        });
+        
+        svr.Get(R"(/api/executors/([^/]+)/tasks)", [this](const httplib::Request& req, httplib::Response& res) {
+          std::string path = "/api/executors/" + req.matches[1] + "/tasks";
+          res.set_content(executorApiHandler_.handleRequest(path, "GET", req.params, ""), "application/json");
+        });
+        
         // 设置静态文件服务
         svr.set_mount_point("/", "./web");
         
+        // 设置CORS头
+        svr.set_default_headers({
+          {"Access-Control-Allow-Origin", "*"},
+          {"Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS"},
+          {"Access-Control-Allow-Headers", "Content-Type, Authorization"}
+        });
+        
+        // 处理OPTIONS请求
+        svr.Options(".*", [](const httplib::Request& req, httplib::Response& res) {
+          res.set_content("", "text/plain");
+        });
+        
         // 启动服务器
-        spdlog::info("统计信息API服务器启动，监听端口: {}", port_);
+        spdlog::info("API服务器启动，监听端口: {}", port_);
         svr.listen("0.0.0.0", port_);
         
-        spdlog::info("统计信息API服务器已停止"); });
+        spdlog::info("API服务器已停止"); });
     }
 
     void stop()
@@ -201,29 +280,31 @@ namespace scheduler
     int port_;
     bool running_;
     std::thread server_thread_;
+    JobApiHandler jobApiHandler_;
+    ExecutorApiHandler executorApiHandler_;
   };
 
-  StatsApiServer::StatsApiServer(int port)
-      : impl_(std::make_unique<Impl>(port))
+  ApiServer::ApiServer(int port, JobScheduler &scheduler)
+      : impl_(std::make_unique<Impl>(port, scheduler))
   {
   }
 
-  StatsApiServer::~StatsApiServer()
+  ApiServer::~ApiServer()
   {
     stop();
   }
 
-  void StatsApiServer::start()
+  void ApiServer::start()
   {
     impl_->start();
   }
 
-  void StatsApiServer::stop()
+  void ApiServer::stop()
   {
     impl_->stop();
   }
 
-  bool StatsApiServer::isRunning() const
+  bool ApiServer::isRunning() const
   {
     return impl_->isRunning();
   }

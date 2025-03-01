@@ -376,7 +376,7 @@ namespace scheduler
     job_storage_->updateJob(job);
 
     // 更新统计信息
-    StatsManager::getInstance().jobStats_.cancelled_jobs++;
+    StatsManager::getInstance().incrementCancelledJobs();
 
     spdlog::info("Job cancelled: {}", job_id);
     return true;
