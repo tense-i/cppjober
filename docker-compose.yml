@@ -1,0 +1,120 @@
+version: '3.8'
+
+services:
+  # MySQL数据库
+  mysql:
+    image: mysql:8.0
+    container_name: scheduler-mysql
+    restart: always
+    environment:
+      MYSQL_ROOT_PASSWORD: scheduler_password
+      MYSQL_DATABASE: distributed_scheduler
+    volumes:
+      - mysql_data:/var/lib/mysql
+      - ./docker/mysql/init.sql:/docker-entrypoint-initdb.d/init.sql
+    ports:
+      - "3306:3306"
+    networks:
+      - scheduler-network
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "root", "-pscheduler_password"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ZooKeeper服务
+  zookeeper:
+    image: confluentinc/cp-zookeeper:7.3.0
+    container_name: scheduler-zookeeper
+    restart: always
+    environment:
+      ZOOKEEPER_CLIENT_PORT: 2181
+      ZOOKEEPER_TICK_TIME: 2000
+    ports:
+      - "2181:2181"
+    networks:
+      - scheduler-network
+    healthcheck:
+      test: ["CMD", "nc", "-z", "localhost", "2181"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # Kafka消息队列
+  kafka:
+    image: confluentinc/cp-kafka:7.3.0
+    container_name: scheduler-kafka
+    restart: always
+    depends_on:
+      - zookeeper
+    environment:
+      KAFKA_BROKER_ID: 1
+      KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
+    ports:
+      - "9092:9092"
+    networks:
+      - scheduler-network
+    healthcheck:
+      test: ["CMD", "kafka-topics", "--bootstrap-server", "localhost:9092", "--list"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # 调度器服务
+  scheduler:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: scheduler-service
+    restart: always
+    depends_on:
+      - mysql
+      - kafka
+    volumes:
+      - ./docker/config:/config
+      - ./docker/scripts:/scripts
+    command: ["/scripts/start-scheduler.sh"]
+    ports:
+      - "8080:8080"
+    networks:
+      - scheduler-network
+
+  # 执行器服务
+  executor:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: scheduler-executor
+    restart: always
+    depends_on:
+      - scheduler
+    volumes:
+      - ./docker/config:/config
+      - ./docker/scripts:/scripts
+    command: ["/scripts/start-executor.sh"]
+    networks:
+      - scheduler-network
+
+  # 前端UI
+  web-ui:
+    build:
+      context: ./web-ui
+      dockerfile: Dockerfile
+    container_name: scheduler-web-ui
+    restart: always
+    depends_on:
+      - scheduler
+    ports:
+      - "80:80"
+    networks:
+      - scheduler-network
+
+networks:
+  scheduler-network:
+    driver: bridge
+
+volumes:
+  mysql_data: 

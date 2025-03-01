@@ -1,0 +1,6 @@
+# .dockerignore
+build/
+**/build/
+**/CMakeCache.txt
+**/*.o
+**/*.a
