@@ -4,6 +4,7 @@ set(COMMON_SOURCES
     src/job_dao.cpp
     src/kafka_message_queue.cpp
     src/cron_parser.cpp
+    src/config_manager.cpp
 )
 
 set(COMMON_HEADERS
@@ -15,6 +16,7 @@ set(COMMON_HEADERS
     include/job_dao.h
     include/kafka_message_queue.h
     include/cron_parser.h
+    include/config_manager.h
 )
 
 add_library(common STATIC ${COMMON_SOURCES} ${COMMON_HEADERS})

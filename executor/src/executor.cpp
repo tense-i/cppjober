@@ -8,6 +8,7 @@
 #include <fstream>
 #include <iostream>
 #include <thread>
+#include "config_manager.h"
 
 namespace scheduler
 {
@@ -17,14 +18,15 @@ namespace scheduler
   {
     // 初始化数据库连接池
     auto &dbPool = DBConnectionPool::getInstance();
-    dbPool.initialize("localhost", "root", "password", "distributed_scheduler");
+    dbPool.initialize();
 
     // 创建Kafka客户端
     kafka_client_ = std::make_unique<KafkaMessageQueue>();
 
     // 初始化Kafka
-    kafka_client_->initProducer("localhost:9092");
-    kafka_client_->initConsumer("localhost:9092", "executor-" + executor_id_, {"job-submit", "job-cancel"}, [this](const KafkaMessage &message)
+    std::string kafkaBrokers = ConfigManager::getInstance().getKafkaBrokers();
+    kafka_client_->initProducer(kafkaBrokers);
+    kafka_client_->initConsumer(kafkaBrokers, "executor-" + executor_id_, {"job-submit", "job-cancel"}, [this](const KafkaMessage &message)
                                 {
           if (message.type == MessageType::JOB_SUBMIT)
           {
@@ -255,7 +257,7 @@ namespace scheduler
     catch (const std::exception &e)
     {
       result.status = JobStatus::FAILED;
-      result.error = e.what();
+      error = e.what();
     }
 
     result.output = output;
@@ -267,10 +269,13 @@ namespace scheduler
 
   void JobExecutor::register_executor()
   {
+    // 从配置获取默认最大负载
+    int maxLoad = ConfigManager::getInstance().getInt("executor.default_max_load", 10);
+
     // 向数据库注册执行器
     JobDAO dao;
-    dao.registerExecutor(executor_id_, "localhost", 0);
-    spdlog::info("执行器已注册: {}", executor_id_);
+    dao.registerExecutor(executor_id_, "localhost", 0, maxLoad);
+    spdlog::info("执行器已注册: {}, 最大负载: {}", executor_id_, maxLoad);
   }
 
   void JobExecutor::unregister_executor()
@@ -285,6 +290,10 @@ namespace scheduler
   {
     spdlog::info("心跳线程启动");
 
+    // 从配置获取心跳间隔
+    int heartbeatInterval = ConfigManager::getInstance().getInt("executor.heartbeat_interval", 30);
+    spdlog::info("心跳间隔设置为 {} 秒", heartbeatInterval);
+
     while (running_)
     {
       try
@@ -298,7 +307,7 @@ namespace scheduler
         kafka_client_->sendMessage("executor-heartbeat", message);
 
         // 等待下一次心跳
-        std::this_thread::sleep_for(std::chrono::seconds(30));
+        std::this_thread::sleep_for(std::chrono::seconds(heartbeatInterval));
       }
       catch (const std::exception &e)
       {

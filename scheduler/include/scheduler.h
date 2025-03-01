@@ -67,7 +67,7 @@ namespace scheduler
 
     bool running_;
     std::thread schedule_thread_;
-    std::mutex mutex_;
+    mutable std::mutex mutex_;
     std::condition_variable cv_;
 
     // 执行器选择策略

@@ -6,6 +6,7 @@
 #include <random>
 #include <algorithm>
 #include "cron_parser.h"
+#include "config_manager.h"
 
 namespace scheduler
 {
@@ -216,7 +217,7 @@ namespace scheduler
   {
     // 初始化数据库连接池
     auto &dbPool = DBConnectionPool::getInstance();
-    dbPool.initialize("localhost", "root", "password", "distributed_scheduler");
+    dbPool.initialize();
 
     // 创建组件
     job_storage_ = std::make_unique<JobDAO>();
@@ -224,9 +225,25 @@ namespace scheduler
     executor_registry_ = std::make_unique<ExecutorRegistry>(*job_storage_);
     kafka_client_ = std::make_unique<KafkaMessageQueue>();
 
+    // 从配置中获取执行器选择策略
+    std::string strategyStr = ConfigManager::getInstance().getString("scheduler.executor_selection_strategy", "RANDOM");
+    if (strategyStr == "ROUND_ROBIN")
+    {
+      executor_selection_strategy_ = ExecutorSelectionStrategy::ROUND_ROBIN;
+    }
+    else if (strategyStr == "LEAST_LOAD")
+    {
+      executor_selection_strategy_ = ExecutorSelectionStrategy::LEAST_LOAD;
+    }
+    else
+    {
+      executor_selection_strategy_ = ExecutorSelectionStrategy::RANDOM;
+    }
+
     // 初始化Kafka
-    kafka_client_->initProducer("localhost:9092");
-    kafka_client_->initConsumer("localhost:9092", "scheduler-group", {"job-result"}, [this](const KafkaMessage &message)
+    std::string kafkaBrokers = ConfigManager::getInstance().getKafkaBrokers();
+    kafka_client_->initProducer(kafkaBrokers);
+    kafka_client_->initConsumer(kafkaBrokers, "scheduler-group", {"job-result"}, [this](const KafkaMessage &message)
                                 {
           if (message.type == MessageType::JOB_RESULT)
           {
@@ -398,12 +415,16 @@ namespace scheduler
   {
     spdlog::info("Schedule loop started");
 
+    // 从配置获取检查间隔
+    int checkInterval = ConfigManager::getInstance().getInt("scheduler.check_interval", 5);
+    spdlog::info("调度检查间隔设置为 {} 秒", checkInterval);
+
     while (running_)
     {
       std::unique_lock<std::mutex> lock(mutex_);
 
       // 等待新任务或者定时检查
-      cv_.wait_for(lock, std::chrono::seconds(5), [this]
+      cv_.wait_for(lock, std::chrono::seconds(checkInterval), [this]
                    { return !running_ || job_queue_->size() > 0; });
 
       if (!running_)
