@@ -374,7 +374,7 @@ namespace scheduler
         result.end_time = std::chrono::system_clock::now();
 
         // 更新统计信息
-        StatsManager::getInstance().jobStats_.cancelled_jobs++;
+        StatsManager::getInstance().incrementCancelledJobs();
 
         kafka_client_->sendJobResult("job-result", result);
       }
