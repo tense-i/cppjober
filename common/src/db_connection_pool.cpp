@@ -1,5 +1,6 @@
 #include "db_connection_pool.h"
 #include "config_manager.h"
+#include "stats_manager.h"
 #include <spdlog/spdlog.h>
 #include <chrono>
 
@@ -91,7 +92,18 @@ namespace scheduler
       return false;
     }
 
+    // 记录开始时间
+    auto start = std::chrono::high_resolution_clock::now();
+
     int result = mysql_query(mysql_, query.c_str());
+
+    // 计算查询时间
+    auto end = std::chrono::high_resolution_clock::now();
+    auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(end - start).count();
+
+    // 更新统计信息
+    StatsManager::getInstance().addDbQuery(duration);
+
     if (result != 0)
     {
       spdlog::error("Query execution failed: {}", mysql_error(mysql_));

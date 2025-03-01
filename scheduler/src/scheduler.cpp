@@ -7,6 +7,7 @@
 #include <algorithm>
 #include "cron_parser.h"
 #include "config_manager.h"
+#include "stats_manager.h"
 
 namespace scheduler
 {
@@ -340,6 +341,9 @@ namespace scheduler
     // 添加到任务队列
     job_queue_->push(new_job);
 
+    // 更新统计信息
+    StatsManager::getInstance().updateJobStats(new_job, JobStatus::WAITING);
+
     // 通知调度线程
     cv_.notify_one();
 
@@ -370,6 +374,9 @@ namespace scheduler
     // 更新任务状态
     JobInfo job = *job_opt;
     job_storage_->updateJob(job);
+
+    // 更新统计信息
+    StatsManager::getInstance().jobStats_.cancelled_jobs++;
 
     spdlog::info("Job cancelled: {}", job_id);
     return true;
@@ -431,6 +438,9 @@ namespace scheduler
       {
         break;
       }
+
+      // 更新调度周期统计
+      StatsManager::getInstance().addSchedulerCycle();
 
       // 从数据库获取待处理的任务
       try
@@ -542,6 +552,9 @@ namespace scheduler
     // 更新执行器负载
     executor_registry_->updateExecutorLoad(executor_opt->first, true);
 
+    // 更新统计信息
+    StatsManager::getInstance().updateJobStats(job, JobStatus::RUNNING);
+
     // 发送任务到执行器
     kafka_client_->sendJob("job-submit", job);
 
@@ -595,9 +608,15 @@ namespace scheduler
           executor_registry_->updateExecutorLoad(executor_info->executor_id, false);
           // 增加执行器任务计数
           executor_registry_->incrementExecutorTaskCount(executor_info->executor_id);
+
+          // 更新执行器统计信息
+          StatsManager::getInstance().updateExecutorStats(*executor_info);
         }
       }
     }
+
+    // 更新任务结果统计
+    StatsManager::getInstance().updateJobResultStats(result);
 
     spdlog::info("Job completed: {}, status: {}", result.job_id, static_cast<int>(result.status));
   }

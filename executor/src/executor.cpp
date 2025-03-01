@@ -9,6 +9,7 @@
 #include <iostream>
 #include <thread>
 #include "config_manager.h"
+#include "stats_manager.h"
 
 namespace scheduler
 {
@@ -189,6 +190,9 @@ namespace scheduler
     std::string output;
     std::string error;
 
+    // 更新统计信息
+    StatsManager::getInstance().updateJobStats(job, JobStatus::RUNNING);
+
     try
     {
       // 创建临时文件存储命令
@@ -263,6 +267,9 @@ namespace scheduler
     result.output = output;
     result.error = error;
     result.end_time = std::chrono::system_clock::now();
+
+    // 更新任务结果统计
+    StatsManager::getInstance().updateJobResultStats(result);
 
     return result;
   }
@@ -365,6 +372,9 @@ namespace scheduler
         result.error = "任务被取消";
         result.start_time = std::chrono::system_clock::now();
         result.end_time = std::chrono::system_clock::now();
+
+        // 更新统计信息
+        StatsManager::getInstance().jobStats_.cancelled_jobs++;
 
         kafka_client_->sendJobResult("job-result", result);
       }
