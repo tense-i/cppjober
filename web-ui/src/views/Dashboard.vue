@@ -129,6 +129,7 @@ import * as echarts from 'echarts/core'
 import { PieChart } from 'echarts/charts'
 import { TitleComponent, TooltipComponent, LegendComponent } from 'echarts/components'
 import { CanvasRenderer } from 'echarts/renderers'
+import { statsApi } from '@/api' // 导入API服务
 
 // 注册必要的组件
 echarts.use([TitleComponent, TooltipComponent, LegendComponent, PieChart, CanvasRenderer])
@@ -184,11 +185,7 @@ export default defineComponent({
     // 获取统计数据
     const fetchStats = async () => {
       try {
-        const response = await fetch('/api/stats')
-        if (!response.ok) {
-          throw new Error('获取统计数据失败')
-        }
-        const data = await response.json()
+        const data = await statsApi.getAllStats()
         stats.value = data
         
         // 更新图表

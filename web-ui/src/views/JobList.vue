@@ -241,6 +241,7 @@ import { defineComponent, ref, reactive, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Search, Plus, Refresh } from '@element-plus/icons-vue'
+import { jobApi } from '@/api' // 导入API服务
 
 export default defineComponent({
   name: 'JobList',
@@ -332,33 +333,33 @@ export default defineComponent({
     const fetchJobs = async () => {
       loading.value = true
       try {
-        // 模拟API请求
-        setTimeout(() => {
-          // 模拟数据
-          const mockData = Array(total.value).fill(0).map((_, index) => ({
-            job_id: `job-${100 + index}`,
-            name: `测试任务 ${index + 1}`,
-            type: index % 3 === 0 ? 'PERIODIC' : 'ONCE',
-            cron_expression: index % 3 === 0 ? '0 0 * * *' : '',
-            priority: Math.floor(Math.random() * 10),
-            timeout: 60,
-            retry_count: Math.floor(Math.random() * 3),
-            retry_interval: 30,
-            command: `echo "执行任务 ${index + 1}"`,
-            status: ['WAITING', 'RUNNING', 'SUCCESS', 'FAILED'][Math.floor(Math.random() * 4)],
-            create_time: new Date().toISOString()
-          }))
-          
-          // 分页处理
-          const start = (currentPage.value - 1) * pageSize.value
-          const end = start + pageSize.value
-          jobList.value = mockData.slice(start, end)
-          
-          loading.value = false
-        }, 500)
+        const params = {
+          offset: (currentPage.value - 1) * pageSize.value,
+          limit: pageSize.value,
+          keyword: searchKeyword.value
+        }
+        
+        const data = await jobApi.getJobs(params)
+        
+        if (Array.isArray(data)) {
+          jobList.value = data
+          total.value = data.length // 注意：实际应该从后端获取总数
+        } else if (data && typeof data === 'object') {
+          // 处理可能的分页响应格式
+          if (Array.isArray(data.items)) {
+            jobList.value = data.items
+            total.value = data.total || data.items.length
+          } else {
+            jobList.value = []
+            total.value = 0
+          }
+        }
       } catch (error) {
         console.error('获取任务列表失败:', error)
         ElMessage.error('获取任务列表失败，请稍后重试')
+        jobList.value = []
+        total.value = 0
+      } finally {
         loading.value = false
       }
     }
@@ -366,7 +367,6 @@ export default defineComponent({
     // 刷新任务列表
     const refreshJobs = () => {
       fetchJobs()
-      ElMessage.success('刷新成功')
     }
     
     // 搜索任务
@@ -389,14 +389,19 @@ export default defineComponent({
     
     // 点击行
     const handleRowClick = (row: any) => {
-      currentJob.value = row
-      jobDetailVisible.value = true
+      handleViewJob(row)
     }
     
-    // 查看任务
-    const handleViewJob = (row: any) => {
-      currentJob.value = row
-      jobDetailVisible.value = true
+    // 查看任务详情
+    const handleViewJob = async (row: any) => {
+      try {
+        const jobDetail = await jobApi.getJob(row.job_id)
+        currentJob.value = jobDetail
+        jobDetailVisible.value = true
+      } catch (error) {
+        console.error('获取任务详情失败:', error)
+        ElMessage.error('获取任务详情失败，请稍后重试')
+      }
     }
     
     // 查看执行记录
@@ -408,57 +413,45 @@ export default defineComponent({
     // 执行任务
     const handleRunJob = (row: any) => {
       ElMessageBox.confirm(
-        `确定要立即执行任务 "${row.name}" 吗？`,
+        `确定要执行任务 "${row.name}" 吗？`,
         '执行确认',
         {
           confirmButtonText: '确定',
           cancelButtonText: '取消',
-          type: 'warning'
+          type: 'info'
         }
-      ).then(() => {
-        // 模拟API请求
-        setTimeout(() => {
-          ElMessage.success(`任务 "${row.name}" 已提交执行`)
-        }, 500)
+      ).then(async () => {
+        try {
+          await jobApi.executeJob(row.job_id)
+          ElMessage.success('任务已提交执行')
+          refreshJobs()
+        } catch (error) {
+          console.error('执行任务失败:', error)
+          ElMessage.error('执行任务失败，请稍后重试')
+        }
       }).catch(() => {
-        // 取消执行
+        // 取消操作
       })
     }
     
     // 添加任务
     const handleAddJob = () => {
       isEdit.value = false
-      // 重置表单
-      Object.assign(jobForm, {
-        job_id: '',
-        name: '',
-        type: 'ONCE',
-        cron_expression: '',
-        priority: 0,
-        timeout: 60,
-        retry_count: 0,
-        retry_interval: 0,
-        command: ''
-      })
+      resetJobForm()
       jobFormVisible.value = true
     }
     
     // 编辑任务
-    const handleEditJob = (row: any) => {
-      isEdit.value = true
-      // 填充表单
-      Object.assign(jobForm, {
-        job_id: row.job_id,
-        name: row.name,
-        type: row.type,
-        cron_expression: row.cron_expression,
-        priority: row.priority,
-        timeout: row.timeout,
-        retry_count: row.retry_count,
-        retry_interval: row.retry_interval,
-        command: row.command
-      })
-      jobFormVisible.value = true
+    const handleEditJob = async (row: any) => {
+      try {
+        const jobDetail = await jobApi.getJob(row.job_id)
+        isEdit.value = true
+        Object.assign(jobForm, jobDetail)
+        jobFormVisible.value = true
+      } catch (error) {
+        console.error('获取任务详情失败:', error)
+        ElMessage.error('获取任务详情失败，请稍后重试')
+      }
     }
     
     // 删除任务
@@ -471,31 +464,53 @@ export default defineComponent({
           cancelButtonText: '取消',
           type: 'warning'
         }
-      ).then(() => {
-        // 模拟API请求
-        setTimeout(() => {
-          ElMessage.success(`任务 "${row.name}" 已删除`)
-          fetchJobs()
-        }, 500)
+      ).then(async () => {
+        try {
+          await jobApi.deleteJob(row.job_id)
+          ElMessage.success('任务已删除')
+          refreshJobs()
+        } catch (error) {
+          console.error('删除任务失败:', error)
+          ElMessage.error('删除任务失败，请稍后重试')
+        }
       }).catch(() => {
-        // 取消删除
+        // 取消操作
       })
     }
     
     // 提交任务表单
     const submitJobForm = () => {
-      jobFormRef.value.validate((valid: boolean) => {
+      jobFormRef.value.validate(async (valid: boolean) => {
         if (valid) {
-          // 模拟API请求
-          setTimeout(() => {
-            ElMessage.success(isEdit.value ? '任务更新成功' : '任务添加成功')
+          try {
+            if (isEdit.value) {
+              await jobApi.updateJob(jobForm.job_id, jobForm)
+              ElMessage.success('任务更新成功')
+            } else {
+              await jobApi.addJob(jobForm)
+              ElMessage.success('任务添加成功')
+            }
             jobFormVisible.value = false
-            fetchJobs()
-          }, 500)
-        } else {
-          return false
+            refreshJobs()
+          } catch (error) {
+            console.error('保存任务失败:', error)
+            ElMessage.error('保存任务失败，请稍后重试')
+          }
         }
       })
+    }
+    
+    // 重置任务表单
+    const resetJobForm = () => {
+      jobForm.job_id = ''
+      jobForm.name = ''
+      jobForm.type = 'ONCE'
+      jobForm.cron_expression = ''
+      jobForm.priority = 0
+      jobForm.timeout = 60
+      jobForm.retry_count = 0
+      jobForm.retry_interval = 0
+      jobForm.command = ''
     }
     
     // 获取状态类型

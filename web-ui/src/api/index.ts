@@ -108,6 +108,21 @@ export const executorApi = {
   // 获取执行器详情
   getExecutor(executorId: string) {
     return api.get(`/executors/${executorId}`)
+  },
+  
+  // 更新执行器最大负载
+  updateExecutorMaxLoad(executorId: string, maxLoad: number) {
+    return api.put(`/executors/${executorId}/load`, { max_load: maxLoad })
+  },
+  
+  // 启用/禁用执行器
+  updateExecutorStatus(executorId: string, online: boolean) {
+    return api.put(`/executors/${executorId}/status`, { online })
+  },
+  
+  // 获取执行器任务列表
+  getExecutorTasks(executorId: string, params: any) {
+    return api.get(`/executors/${executorId}/tasks`, { params })
   }
 }
 
