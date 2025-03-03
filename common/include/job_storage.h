@@ -5,6 +5,7 @@
 #include <vector>
 #include <mysql/mysql.h>
 #include "job.h"
+#include <mutex>
 
 namespace scheduler
 {
