@@ -1,0 +1,23 @@
+@startuml t1
+
+
+Person(user, "用户", "系统使用者")
+System_Boundary(c1, "分布式任务调度系统") {
+    Container(web_ui, "Web UI", "Vue.js", "提供用户界面")
+    Container(scheduler, "调度器", "C++", "负责任务调度和分发")
+    Container(executor, "执行器", "C++", "执行具体任务")
+    ContainerDb(mysql, "MySQL", "数据库", "存储任务定义和执行记录")
+    Container(kafka, "Kafka", "消息队列", "任务分发和结果回传")
+    Container(zookeeper, "ZooKeeper", "协调服务", "服务发现和协调")
+}
+
+Rel(user, web_ui, "使用")
+Rel(web_ui, scheduler, "API调用", "HTTP")
+Rel(scheduler, mysql, "读写数据")
+Rel(scheduler, kafka, "发送任务")
+Rel(executor, kafka, "接收任务/返回结果")
+Rel(scheduler, zookeeper, "服务注册/发现")
+Rel(executor, zookeeper, "服务注册")
+Rel(executor, mysql, "读写执行记录")
+
+@enduml
