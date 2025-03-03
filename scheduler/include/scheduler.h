@@ -10,6 +10,7 @@
 #include "job.h"
 #include "job_dao.h"
 #include "kafka_message_queue.h"
+#include "zk_registry.h"
 
 namespace scheduler
 {
@@ -28,7 +29,8 @@ namespace scheduler
   class JobScheduler
   {
   public:
-    JobScheduler();
+    // 构造函数
+    JobScheduler(const std::string &node_id, const std::string &zk_hosts);
     ~JobScheduler();
 
     // 启动调度器
@@ -50,6 +52,10 @@ namespace scheduler
     // 获取当前执行器选择策略
     ExecutorSelectionStrategy get_executor_selection_strategy() const;
 
+    // 获取节点状态
+    bool is_leader() const;
+    std::string get_node_id() const;
+
   private:
     // 调度线程函数
     void schedule_loop();
@@ -60,18 +66,31 @@ namespace scheduler
     // 处理执行结果
     void handle_result(const JobResult &result);
 
+    // 主备切换相关
+    void leader_election_loop();
+    bool try_become_leader();
+    void handle_leader_change(const std::string &new_leader);
+    void on_become_leader();
+    void on_become_follower();
+
     std::unique_ptr<JobQueue> job_queue_;
     std::unique_ptr<ExecutorRegistry> executor_registry_;
     std::unique_ptr<JobDAO> job_storage_;
     std::unique_ptr<KafkaMessageQueue> kafka_client_;
+    std::shared_ptr<ZkRegistry> zk_registry_;
 
     bool running_;
     std::thread schedule_thread_;
+    std::thread election_thread_;
     mutable std::mutex mutex_;
     std::condition_variable cv_;
 
     // 执行器选择策略
     ExecutorSelectionStrategy executor_selection_strategy_;
+
+    // 节点标识
+    std::string node_id_;
+    bool is_leader_;
   };
 
 } // namespace scheduler

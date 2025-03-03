@@ -1,31 +1,27 @@
 {
-  "name": "distributed-scheduler",
-  "version": "0.1.0",
+  "name": "scheduler",
+  "version": "1.0.0",
   "dependencies": [
     {
-      "name": "libmysql",
-      "version>=": "8.0.31"
-    },
-    {
-      "name": "librdkafka",
-      "version>=": "2.1.0"
-    },
-    {
-      "name": "etcd-cpp-apiv3",
-      "version>=": "0.8.0"
+      "name": "spdlog",
+      "version>=": "1.11.0"
     },
     {
       "name": "nlohmann-json",
       "version>=": "3.11.2"
     },
     {
-      "name": "spdlog",
-      "version>=": "1.12.0"
+      "name": "librdkafka",
+      "version>=": "2.2.0"
     },
     {
-      "name": "libuuid",
-      "platform": "!windows"
+      "name": "libmysql",
+      "version>=": "8.0.32"
+    },
+    {
+      "name": "zookeeper",
+      "version>=": "3.8.1"
     }
   ],
-  "builtin-baseline": "2024-02-28"
+  "builtin-baseline": "2023.10.19"
 }

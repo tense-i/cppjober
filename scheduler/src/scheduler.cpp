@@ -8,6 +8,8 @@
 #include "cron_parser.h"
 #include "config_manager.h"
 #include "stats_manager.h"
+#include "zk_client.h"
+#include "zk_registry.h"
 
 namespace scheduler
 {
@@ -96,7 +98,7 @@ namespace scheduler
   class ExecutorRegistry
   {
   public:
-    ExecutorRegistry(JobDAO &dao) : dao_(dao), current_index_(0) {}
+    ExecutorRegistry(JobDAO &dao, ZkRegistry &zk_registry) : dao_(dao), zk_registry_(zk_registry), current_index_(0) {}
 
     // 获取可用执行器 - 随机策略
     std::optional<std::pair<std::string, std::string>> getRandomExecutor()
@@ -208,26 +210,45 @@ namespace scheduler
 
   private:
     JobDAO &dao_;
+    ZkRegistry &zk_registry_;
     size_t current_index_; // 用于轮询策略
     std::mutex mutex_;     // 保护current_index_
   };
 
   // JobScheduler实现
-  JobScheduler::JobScheduler()
-      : running_(false), executor_selection_strategy_(ExecutorSelectionStrategy::RANDOM)
+  JobScheduler::JobScheduler(const std::string &node_id, const std::string &zk_hosts)
+      : running_(false),
+        executor_selection_strategy_(ExecutorSelectionStrategy::RANDOM),
+        node_id_(node_id),
+        is_leader_(false)
   {
     // 初始化数据库连接池
     auto &dbPool = DBConnectionPool::getInstance();
     dbPool.initialize();
 
+    // 初始化ZooKeeper客户端
+    auto zk_client = std::make_shared<ZkClient>(zk_hosts);
+    if (!zk_client->connect())
+    {
+      throw std::runtime_error("Failed to connect to ZooKeeper");
+    }
+
+    // 初始化ZooKeeper注册中心
+    zk_registry_ = std::make_shared<ZkRegistry>(zk_client);
+    if (!zk_registry_->init())
+    {
+      throw std::runtime_error("Failed to initialize ZooKeeper registry");
+    }
+
     // 创建组件
     job_storage_ = std::make_unique<JobDAO>();
     job_queue_ = std::make_unique<JobQueue>();
-    executor_registry_ = std::make_unique<ExecutorRegistry>(*job_storage_);
+    executor_registry_ = std::make_unique<ExecutorRegistry>(*job_storage_, *zk_registry_);
     kafka_client_ = std::make_unique<KafkaMessageQueue>();
 
     // 从配置中获取执行器选择策略
-    std::string strategyStr = ConfigManager::getInstance().getString("scheduler.executor_selection_strategy", "RANDOM");
+    std::string strategyStr = ConfigManager::getInstance().getString(
+        "scheduler.executor_selection_strategy", "RANDOM");
     if (strategyStr == "ROUND_ROBIN")
     {
       executor_selection_strategy_ = ExecutorSelectionStrategy::ROUND_ROBIN;
@@ -244,24 +265,23 @@ namespace scheduler
     // 初始化Kafka
     std::string kafkaBrokers = ConfigManager::getInstance().getKafkaBrokers();
     kafka_client_->initProducer(kafkaBrokers);
-    kafka_client_->initConsumer(kafkaBrokers, "scheduler-group", {"job-result"}, [this](const KafkaMessage &message)
+    kafka_client_->initConsumer(kafkaBrokers, "scheduler-group", {"job-result"},
+                                [this](const KafkaMessage &message)
                                 {
-          if (message.type == MessageType::JOB_RESULT)
-          {
-            try
-            {
-              // 解析任务结果
-              nlohmann::json j = nlohmann::json::parse(message.payload);
-              JobResult result = JobResult::from_json(j);
-              
-              // 处理任务结果
-              handle_result(result);
-            }
-            catch (const std::exception &e)
-            {
-              spdlog::error("Failed to parse job result: {}", e.what());
-            }
-          } });
+                                  if (message.type == MessageType::JOB_RESULT)
+                                  {
+                                    try
+                                    {
+                                      nlohmann::json j = nlohmann::json::parse(message.payload);
+                                      JobResult result = JobResult::from_json(j);
+                                      handle_result(result);
+                                    }
+                                    catch (const std::exception &e)
+                                    {
+                                      spdlog::error("Failed to parse job result: {}", e.what());
+                                    }
+                                  }
+                                });
   }
 
   JobScheduler::~JobScheduler()
@@ -278,12 +298,17 @@ namespace scheduler
     }
 
     running_ = true;
+
+    // 启动主备选举线程
+    election_thread_ = std::thread(&JobScheduler::leader_election_loop, this);
+
+    // 启动调度线程
     schedule_thread_ = std::thread(&JobScheduler::schedule_loop, this);
 
     // 启动Kafka消费
     kafka_client_->startConsume();
 
-    spdlog::info("Job scheduler started");
+    spdlog::info("Job scheduler started, node_id: {}", node_id_);
   }
 
   void JobScheduler::stop()
@@ -299,10 +324,14 @@ namespace scheduler
       cv_.notify_all();
     }
 
-    // 等待调度线程结束
+    // 等待线程结束
     if (schedule_thread_.joinable())
     {
       schedule_thread_.join();
+    }
+    if (election_thread_.joinable())
+    {
+      election_thread_.join();
     }
 
     // 停止Kafka消费
@@ -430,13 +459,20 @@ namespace scheduler
     {
       std::unique_lock<std::mutex> lock(mutex_);
 
-      // 等待新任务或者定时检查
-      cv_.wait_for(lock, std::chrono::seconds(checkInterval), [this]
-                   { return !running_ || job_queue_->size() > 0; });
+      // 如果不是主节点，等待成为主节点
+      cv_.wait_for(lock, std::chrono::seconds(checkInterval),
+                   [this]
+                   { return !running_ || (is_leader_ && job_queue_->size() > 0); });
 
       if (!running_)
       {
         break;
+      }
+
+      // 如果不是主节点，继续等待
+      if (!is_leader_)
+      {
+        continue;
       }
 
       // 更新调度周期统计
@@ -457,7 +493,7 @@ namespace scheduler
       }
 
       // 处理队列中的任务
-      while (running_)
+      while (running_ && is_leader_)
       {
         auto job_opt = job_queue_->pop();
         if (!job_opt)
@@ -483,6 +519,89 @@ namespace scheduler
     spdlog::info("Schedule loop stopped");
   }
 
+  void JobScheduler::leader_election_loop()
+  {
+    spdlog::info("Leader election loop started");
+
+    while (running_)
+    {
+      try
+      {
+        // 尝试成为主节点
+        if (try_become_leader())
+        {
+          // 成功成为主节点
+          std::lock_guard<std::mutex> lock(mutex_);
+          if (!is_leader_)
+          {
+            is_leader_ = true;
+            on_become_leader();
+          }
+        }
+        else
+        {
+          // 获取当前主节点
+          std::string current_leader = zk_registry_->get_current_leader();
+
+          // 如果当前是主节点但不再是主节点
+          {
+            std::lock_guard<std::mutex> lock(mutex_);
+            if (is_leader_ && current_leader != node_id_)
+            {
+              is_leader_ = false;
+              on_become_follower();
+            }
+          }
+
+          // 监听主节点变化
+          handle_leader_change(current_leader);
+        }
+      }
+      catch (const std::exception &e)
+      {
+        spdlog::error("Leader election error: {}", e.what());
+      }
+
+      // 等待一段时间后重试
+      std::this_thread::sleep_for(std::chrono::seconds(5));
+    }
+
+    spdlog::info("Leader election loop stopped");
+  }
+
+  bool JobScheduler::try_become_leader()
+  {
+    return zk_registry_->elect_leader(node_id_);
+  }
+
+  void JobScheduler::handle_leader_change(const std::string &new_leader)
+  {
+    spdlog::info("Leader changed to: {}", new_leader);
+
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (new_leader == node_id_ && !is_leader_)
+    {
+      is_leader_ = true;
+      on_become_leader();
+    }
+    else if (new_leader != node_id_ && is_leader_)
+    {
+      is_leader_ = false;
+      on_become_follower();
+    }
+  }
+
+  void JobScheduler::on_become_leader()
+  {
+    spdlog::info("Became leader node");
+    cv_.notify_all(); // 唤醒调度线程
+  }
+
+  void JobScheduler::on_become_follower()
+  {
+    spdlog::info("Became follower node");
+  }
+
   bool JobScheduler::should_execute(const JobInfo &job)
   {
     // 对于一次性任务，直接执行
@@ -500,12 +619,10 @@ namespace scheduler
         CronParser parser(job.cron_expression);
         if (!parser.matches())
         {
-          // 当前时间不匹配Cron表达式，不需要执行
           return false;
         }
 
         // 检查是否已经执行过
-        // 获取最近一次执行记录
         auto executions = job_storage_->getJobExecutions(job.job_id, 0, 1);
         if (!executions.empty())
         {
@@ -520,7 +637,8 @@ namespace scheduler
       }
       catch (const std::exception &e)
       {
-        spdlog::error("解析Cron表达式失败: {}, 错误: {}", job.cron_expression, e.what());
+        spdlog::error("解析Cron表达式失败: {}, 错误: {}",
+                      job.cron_expression, e.what());
         return false;
       }
     }
@@ -561,6 +679,7 @@ namespace scheduler
     spdlog::info("Job dispatched: {} to executor: {}", job.job_id, executor_opt->first);
   }
 
+  // 处理任务结果
   void JobScheduler::handle_result(const JobResult &result)
   {
     // 查询执行记录

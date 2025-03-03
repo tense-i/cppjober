@@ -185,27 +185,27 @@ namespace scheduler
         });
         
         svr.Get(R"(/api/jobs/([^/]+))", [this](const httplib::Request& req, httplib::Response& res) {
-          std::string path = "/api/jobs/" + req.matches[1];
+          std::string path = "/api/jobs/" + req.matches[1].str();
           res.set_content(jobApiHandler_.handleRequest(path, "GET", req.params, ""), "application/json");
         });
         
         svr.Put(R"(/api/jobs/([^/]+))", [this](const httplib::Request& req, httplib::Response& res) {
-          std::string path = "/api/jobs/" + req.matches[1];
+          std::string path = "/api/jobs/" + req.matches[1].str();
           res.set_content(jobApiHandler_.handleRequest(path, "PUT", req.params, req.body), "application/json");
         });
         
         svr.Delete(R"(/api/jobs/([^/]+))", [this](const httplib::Request& req, httplib::Response& res) {
-          std::string path = "/api/jobs/" + req.matches[1];
+          std::string path = "/api/jobs/" + req.matches[1].str();
           res.set_content(jobApiHandler_.handleRequest(path, "DELETE", req.params, ""), "application/json");
         });
         
         svr.Post(R"(/api/jobs/([^/]+)/execute)", [this](const httplib::Request& req, httplib::Response& res) {
-          std::string path = "/api/jobs/" + req.matches[1] + "/execute";
+          std::string path = "/api/jobs/" + req.matches[1].str() + "/execute";
           res.set_content(jobApiHandler_.handleRequest(path, "POST", req.params, req.body), "application/json");
         });
         
         svr.Get(R"(/api/jobs/([^/]+)/executions)", [this](const httplib::Request& req, httplib::Response& res) {
-          std::string path = "/api/jobs/" + req.matches[1] + "/executions";
+          std::string path = "/api/jobs/" + req.matches[1].str() + "/executions";
           res.set_content(jobApiHandler_.handleRequest(path, "GET", req.params, ""), "application/json");
         });
         
@@ -215,22 +215,22 @@ namespace scheduler
         });
         
         svr.Get(R"(/api/executors/([^/]+))", [this](const httplib::Request& req, httplib::Response& res) {
-          std::string path = "/api/executors/" + req.matches[1];
+          std::string path = "/api/executors/" + req.matches[1].str();
           res.set_content(executorApiHandler_.handleRequest(path, "GET", req.params, ""), "application/json");
         });
         
         svr.Put(R"(/api/executors/([^/]+)/load)", [this](const httplib::Request& req, httplib::Response& res) {
-          std::string path = "/api/executors/" + req.matches[1] + "/load";
+          std::string path = "/api/executors/" + req.matches[1].str() + "/load";
           res.set_content(executorApiHandler_.handleRequest(path, "PUT", req.params, req.body), "application/json");
         });
         
         svr.Put(R"(/api/executors/([^/]+)/status)", [this](const httplib::Request& req, httplib::Response& res) {
-          std::string path = "/api/executors/" + req.matches[1] + "/status";
+          std::string path = "/api/executors/" + req.matches[1].str() + "/status";
           res.set_content(executorApiHandler_.handleRequest(path, "PUT", req.params, req.body), "application/json");
         });
         
         svr.Get(R"(/api/executors/([^/]+)/tasks)", [this](const httplib::Request& req, httplib::Response& res) {
-          std::string path = "/api/executors/" + req.matches[1] + "/tasks";
+          std::string path = "/api/executors/" + req.matches[1].str() + "/tasks";
           res.set_content(executorApiHandler_.handleRequest(path, "GET", req.params, ""), "application/json");
         });
         
