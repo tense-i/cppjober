@@ -1,0 +1,42 @@
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+
+scrape_configs:
+  - job_name: 'scheduler'
+    static_configs:
+      - targets: ['scheduler1:9091', 'scheduler2:9091']
+        labels:
+          service: 'scheduler'
+
+  - job_name: 'executor'
+    static_configs:
+      - targets: ['executor1:9091', 'executor2:9091']
+        labels:
+          service: 'executor'
+
+  - job_name: 'mysql'
+    static_configs:
+      - targets: ['mysql-exporter:9104']
+        labels:
+          service: 'mysql'
+
+  - job_name: 'kafka'
+    static_configs:
+      - targets: ['kafka1:9308', 'kafka2:9308', 'kafka3:9308']
+        labels:
+          service: 'kafka'
+
+  - job_name: 'zookeeper'
+    static_configs:
+      - targets: ['zk1:7000', 'zk2:7000', 'zk3:7000']
+        labels:
+          service: 'zookeeper'
+
+rule_files:
+  - 'rules/*.yml'
+
+alerting:
+  alertmanagers:
+    - static_configs:
+        - targets: ['alertmanager:9093'] 

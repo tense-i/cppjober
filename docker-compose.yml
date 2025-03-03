@@ -164,6 +164,78 @@ services:
       - kafka3
       - mysql
 
+  # Prometheus服务
+  prometheus:
+    image: prom/prometheus:v2.45.0
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./scheduler/config/prometheus.yml:/etc/prometheus/prometheus.yml
+      - ./scheduler/config/rules:/etc/prometheus/rules
+      - prometheus_data:/prometheus
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--web.console.libraries=/usr/share/prometheus/console_libraries'
+      - '--web.console.templates=/usr/share/prometheus/consoles'
+    depends_on:
+      - scheduler1
+      - scheduler2
+
+  # Grafana服务
+  grafana:
+    image: grafana/grafana:10.0.3
+    ports:
+      - "3000:3000"
+    environment:
+      - GF_SECURITY_ADMIN_USER=admin
+      - GF_SECURITY_ADMIN_PASSWORD=admin123
+      - GF_USERS_ALLOW_SIGN_UP=false
+    volumes:
+      - ./scheduler/config/grafana/dashboards:/etc/grafana/provisioning/dashboards
+      - ./scheduler/config/grafana/datasources:/etc/grafana/provisioning/datasources
+      - grafana_data:/var/lib/grafana
+    depends_on:
+      - prometheus
+
+  # AlertManager服务
+  alertmanager:
+    image: prom/alertmanager:v0.25.0
+    ports:
+      - "9093:9093"
+    volumes:
+      - ./scheduler/config/alertmanager:/etc/alertmanager
+      - alertmanager_data:/alertmanager
+    command:
+      - '--config.file=/etc/alertmanager/alertmanager.yml'
+      - '--storage.path=/alertmanager'
+    depends_on:
+      - prometheus
+
+  # MySQL Exporter
+  mysql-exporter:
+    image: prom/mysqld-exporter:v0.15.0
+    ports:
+      - "9104:9104"
+    environment:
+      - DATA_SOURCE_NAME=scheduler:scheduler123@(mysql:3306)/scheduler
+    depends_on:
+      - mysql
+
+  # Kafka Exporter
+  kafka-exporter:
+    image: danielqsj/kafka-exporter:latest
+    ports:
+      - "9308:9308"
+    command:
+      - '--kafka.server=kafka1:29092'
+      - '--kafka.server=kafka2:29092'
+      - '--kafka.server=kafka3:29092'
+    depends_on:
+      - kafka1
+      - kafka2
+      - kafka3
+
 volumes:
   zk1_data:
   zk1_datalog:
@@ -174,4 +246,7 @@ volumes:
   kafka1_data:
   kafka2_data:
   kafka3_data:
-  mysql_data: 
+  mysql_data:
+  prometheus_data:
+  grafana_data:
+  alertmanager_data: 

@@ -1,0 +1,62 @@
+groups:
+  - name: scheduler_alerts
+    rules:
+      # 调度器节点存活告警
+      - alert: SchedulerNodeDown
+        expr: up{service="scheduler"} == 0
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "调度器节点宕机"
+          description: "调度器节点 {{ $labels.instance }} 已经宕机超过1分钟"
+
+      # 执行器节点存活告警
+      - alert: ExecutorNodeDown
+        expr: up{service="executor"} == 0
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "执行器节点宕机"
+          description: "执行器节点 {{ $labels.instance }} 已经宕机超过1分钟"
+
+      # 任务积压告警
+      - alert: JobQueueBacklog
+        expr: scheduler_job_queue_size > 1000
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "任务队列积压"
+          description: "任务队列中有 {{ $value }} 个任务待处理，已积压超过5分钟"
+
+      # 任务执行失败率告警
+      - alert: HighJobFailureRate
+        expr: rate(scheduler_job_failed_total[5m]) / rate(scheduler_job_total[5m]) > 0.1
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "任务失败率过高"
+          description: "最近5分钟任务失败率超过10%"
+
+      # 执行器负载告警
+      - alert: ExecutorOverload
+        expr: executor_current_load / executor_max_load > 0.9
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "执行器负载过高"
+          description: "执行器 {{ $labels.instance }} 负载超过90%，持续5分钟"
+
+      # 主节点选举告警
+      - alert: NoLeaderElected
+        expr: sum(scheduler_is_leader) == 0
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "无主节点"
+          description: "调度系统当前无主节点，请检查ZooKeeper集群状态" 
