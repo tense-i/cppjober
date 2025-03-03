@@ -1,0 +1,14 @@
+/third_party
+/build
+/dist
+/node_modules
+/package-lock.json
+/yarn.lock
+/web-ui/node_modules
+/web-ui/package-lock.json
+/web-ui/yarn.lock
+# 忽略所有日志文件
+*.log
+
+# 忽略所有临时文件
+*.tmp
