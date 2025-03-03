@@ -207,6 +207,16 @@ CREATE TABLE executors (
 
 ![image-20250303140011395](design_document.assets/image-20250303140011395.png)
 
+
+
+### 调度器调度流程
+
+![image-20250303191503084](design_document.assets/image-20250303191503084.png)
+
+
+
+
+
 ## 4. 接口设计
 
 ### 4.1 API接口
